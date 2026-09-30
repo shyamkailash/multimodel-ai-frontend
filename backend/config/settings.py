@@ -60,8 +60,9 @@ INSTALLED_APPS = [
     "rest_framework.authtoken",
     "corsheaders",
 
-    # Local applications
+    # project applications
     "accounts",
+    "materials",
 ]
 
 
