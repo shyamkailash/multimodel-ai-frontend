@@ -35,6 +35,10 @@ backend/.env
 backend/.venv/
 backend/media/
 backend/staticfiles/
+backend/chroma_db/
+chroma_db/
+.cache/
+.pytest_cache/
 
 # Environment
 .env

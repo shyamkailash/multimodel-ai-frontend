@@ -36,7 +36,7 @@ ALLOWED_HOSTS = [
     host.strip()
     for host in os.getenv(
         "DJANGO_ALLOWED_HOSTS",
-        "127.0.0.1,localhost",
+        "127.0.0.1,localhost,testserver",
     ).split(",")
     if host.strip()
 ]
@@ -63,6 +63,7 @@ INSTALLED_APPS = [
     # project applications
     "accounts",
     "materials",
+    "knowledge",
 ]
 
 

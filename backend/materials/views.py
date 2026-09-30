@@ -1,6 +1,6 @@
+import logging
 from django.shortcuts import get_object_or_404
 from rest_framework import status
-from rest_framework.authentication import TokenAuthentication
 from rest_framework.decorators import (
     api_view,
     authentication_classes,
@@ -9,18 +9,22 @@ from rest_framework.decorators import (
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from accounts.authentication import BearerOrTokenAuthentication
+from knowledge.pipeline import process_material
+from knowledge.vectorstore import get_vectorstore
 from .models import Material
 from .serializers import MaterialSerializer
 
+logger = logging.getLogger(__name__)
+
 
 @api_view(["GET"])
-@authentication_classes([TokenAuthentication])
+@authentication_classes([BearerOrTokenAuthentication])
 @permission_classes([IsAuthenticated])
 def materials_list(request):
     """
     GET /api/materials
     """
-
     materials = Material.objects.filter(user=request.user)
 
     serializer = MaterialSerializer(
@@ -33,13 +37,12 @@ def materials_list(request):
 
 
 @api_view(["POST"])
-@authentication_classes([TokenAuthentication])
+@authentication_classes([BearerOrTokenAuthentication])
 @permission_classes([IsAuthenticated])
 def material_upload(request):
     """
     POST /api/materials/upload
     """
-
     serializer = MaterialSerializer(
         data=request.data,
         context={"request": request},
@@ -62,6 +65,14 @@ def material_upload(request):
         material_type=_get_material_type(uploaded_file),
     )
 
+    # Process material through knowledge pipeline (extract, chunk, embed, store in ChromaDB)
+    try:
+        process_material(material)
+    except Exception as e:
+        logger.warning(f"Knowledge ingestion pipeline encountered error for material {material.id}: {e}")
+
+    material.refresh_from_db()
+
     return Response(
         MaterialSerializer(
             material,
@@ -80,11 +91,8 @@ def _get_material_type(uploaded_file):
     if extension == "pdf":
         return "pdf"
 
-    if extension == "ppt":
+    if extension in {"ppt", "pptx"}:
         return "ppt"
-
-    if extension == "pptx":
-        return "pptx"
 
     if extension in {"mp4", "mov", "avi", "mkv", "webm"}:
         return "video"
@@ -93,7 +101,7 @@ def _get_material_type(uploaded_file):
 
 
 @api_view(["DELETE"])
-@authentication_classes([TokenAuthentication])
+@authentication_classes([BearerOrTokenAuthentication])
 @permission_classes([IsAuthenticated])
 def material_delete(request, material_id):
     material = get_object_or_404(
@@ -101,6 +109,13 @@ def material_delete(request, material_id):
         id=material_id,
         user=request.user,
     )
+
+    # Delete ChromaDB vector entries for this material
+    try:
+        vectorstore = get_vectorstore()
+        vectorstore.delete_material_chunks(user_id=request.user.id, material_id=material.id)
+    except Exception as e:
+        logger.warning(f"Error cleaning ChromaDB chunks for material {material_id}: {e}")
 
     material.delete()
 
@@ -113,7 +128,7 @@ def material_delete(request, material_id):
 
 
 @api_view(["POST"])
-@authentication_classes([TokenAuthentication])
+@authentication_classes([BearerOrTokenAuthentication])
 @permission_classes([IsAuthenticated])
 def material_reprocess(request, material_id):
     material = get_object_or_404(
@@ -124,6 +139,14 @@ def material_reprocess(request, material_id):
 
     material.status = "processing"
     material.save(update_fields=["status", "updated_at"])
+
+    # Re-run knowledge ingestion pipeline
+    try:
+        process_material(material)
+    except Exception as e:
+        logger.warning(f"Knowledge reprocessing failed for material {material.id}: {e}")
+
+    material.refresh_from_db()
 
     return Response(
         MaterialSerializer(
